@@ -1,0 +1,13 @@
+{{{bold name}}}
+{{{bold "name"}}}
+{{#or isfalse false}}FALSE{{/or}}
+{{#or 0 false}}FALSE{{/or}}
+{{#or true false}}TRUE{{/or}}
+{{#or istrue false}}TRUE{{/or}}
+{{#or 1 false}}TRUE{{/or}}
+{{#or "true" false}}TRUE{{/or}}
+{{#or "true true" false}}TRUE{{/or}}
+{{#or "true \"true" false}}TRUE{{/or}}
+{{{bold true}}}
+{{{bold false}}}
+{{{bold 5.5}}}

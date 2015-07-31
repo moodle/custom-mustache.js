@@ -149,7 +149,7 @@ function parseTemplate (template, tags) {
 
   var scanner = new Scanner(template);
 
-  var start, type, value, chr, token, openSection;
+  var start, type, value, chr, token, openSection, tagName, endTagName;
   while (!scanner.eos()) {
     start = scanner.pos;
 
@@ -226,9 +226,10 @@ function parseTemplate (template, tags) {
 
       if (!openSection)
         throw new Error('Unopened section "' + value + '" at ' + start);
-
-      if (openSection[1] !== value)
-        throw new Error('Unclosed section "' + openSection[1] + '" at ' + start);
+      tagName = openSection[1].split(' ', 1)[0];
+      endTagName = value.split(' ', 1)[0];
+      if (tagName !== endTagName)
+        throw new Error('Unclosed section "' + tagName + '" at ' + start);
     } else if (type === 'name' || type === '{' || type === '&') {
       nonSpace = true;
     } else if (type === '=') {
@@ -421,11 +422,68 @@ Context.prototype.getBlockVar = function getBlockVar (name) {
 };
 
 /**
+ * Parse a tag name into an array of name and arguments (space separated, quoted strings allowed).
+ */
+Context.prototype.parseNameAndArgs = function parseNameAndArgs (name) {
+  var parts = name.split(' ');
+  var inString = false;
+  var first = true;
+  var i = 0;
+  var arg;
+  var unescapedArg;
+  var argbuffer;
+  var finalArgs = [];
+
+  for (i = 0; i < parts.length; i++) {
+    arg = parts[i];
+    argbuffer = '';
+
+    if (inString) {
+      unescapedArg = arg.replace('\\\\', '');
+      if (unescapedArg.search(/^"$|[^\\]"$/) !== -1) {
+        finalArgs[finalArgs.length] = argbuffer + ' ' + arg.substr(0, arg.length - 1);
+        argbuffer = '';
+        inString = false;
+      } else {
+        argbuffer += ' ' + arg;
+      }
+    } else {
+      if (arg.search(/^"/) !== -1 && !first) {
+        unescapedArg = arg.replace('\\\\', '');
+        if (unescapedArg.search(/^".*[^\\]"$/) !== -1) {
+          finalArgs[finalArgs.length] = arg.substr(1, arg.length - 2);
+        } else {
+          inString = true;
+          argbuffer = arg.substr(1);
+        }
+      } else {
+        if (arg.search(/^\d+(\.\d*)?$/) !== -1) {
+          finalArgs[finalArgs.length] = parseFloat(arg);
+        } else if (arg === 'true') {
+          finalArgs[finalArgs.length] = 1;
+        } else if (arg === 'false') {
+          finalArgs[finalArgs.length] = 0;
+        } else if (first) {
+          finalArgs[finalArgs.length] = arg;
+        } else {
+          finalArgs[finalArgs.length] = this.lookup(arg);
+        }
+        first = false;
+      }
+    }
+  }
+
+  return finalArgs;
+};
+
+/**
  * Returns the value of the given name in this context, traversing
  * up the context hierarchy if the value is absent in this context's view.
  */
 Context.prototype.lookup = function lookup (name) {
   var cache = this.cache;
+  var lambdaArgs = this.parseNameAndArgs(name);
+  name= lambdaArgs.shift();
 
   var value;
   if (cache.hasOwnProperty(name)) {
@@ -502,7 +560,7 @@ Context.prototype.lookup = function lookup (name) {
   }
 
   if (isFunction(value))
-    value = value.call(this.view);
+    value = value.call(this.view, lambdaArgs);
 
   return value;
 };
@@ -621,7 +679,9 @@ Writer.prototype.renderTokens = function renderTokens (tokens, context, partials
 Writer.prototype.renderSection = function renderSection (token, context, partials, originalTemplate, config) {
   var self = this;
   var buffer = '';
-  var value = context.lookup(token[1]);
+  var lambdaArgs = context.parseNameAndArgs(token[1]);
+  var name = lambdaArgs.shift();
+  var value = context.lookup(name);
 
   // This function is used to render an arbitrary template
   // in the current context by higher-order sections.
@@ -642,7 +702,7 @@ Writer.prototype.renderSection = function renderSection (token, context, partial
       throw new Error('Cannot use higher-order sections without the original template');
 
     // Extract the portion of the original template that the section contains.
-    value = value.call(context.view, originalTemplate.slice(token[3], token[5]), subRender);
+    value = value.call(context.view, originalTemplate.slice(token[3], token[5]), subRender, lambdaArgs);
 
     if (value != null)
       buffer += value;
